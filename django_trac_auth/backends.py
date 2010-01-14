@@ -32,33 +32,12 @@ from django.contrib.auth.models import User
 from djblets.util.misc import get_object_or_none
 
 
-def get_trac_user(path, username):
-    from trac.env import Environment
-    env = Environment(path)
-    db = env.get_db_cnx()
-    cursor = db.cursor()
-    cursor.execute("SELECT name, value"
-                   " FROM session_attribute"
-                   " WHERE sid='%s'"
-                   " AND (name='email' OR name='name')" % username)
-    return dict((name, value) for name, value in cursor)
+class HtPasswdBackend(object):
 
-
-class TracHtPasswdBackend(object):
-
-    def _get_trac_user(self, username):
-        try:
-            trac_env = settings.TRAC_ENV
-            data = get_trac_user(self.trac_env, username)
-        except:
-            data = {}
-        email = data.get('email', '')
-        name = data.get('name', '').split(None, 1)
-        first_name = (len(name) >= 1) and name[0] or ''
-        last_name = (len(name) == 2) and name[1] or ''
-        if email == '' and getattr(settings, 'TRAC_EMAIL_USERNAME', False):
+    def _get_user_info(self, username, password=None):
+        if getattr(settings, 'TRAC_EMAIL_USERNAME', False):
             email = username
-        return (email, first_name, last_name)
+        return (email, '', '')
 
     def _get_member_of(self, username, seen=None):
         if seen is None:
@@ -102,7 +81,7 @@ class TracHtPasswdBackend(object):
                 if not user.check_password(password):
                     user.set_password(password)
         except User.DoesNotExist:
-            email, first_name, last_name = self._get_trac_user(username)
+            email, first_name, last_name = self._get_user_info(username, password)
             try:
                 user = User(username=username,
                             password='',
@@ -122,4 +101,33 @@ class TracHtPasswdBackend(object):
 
     def get_user(self, user_id):
         return get_object_or_none(User, pk=user_id)
+
+
+def get_trac_user(path, username):
+    from trac.env import Environment
+    env = Environment(path)
+    db = env.get_db_cnx()
+    cursor = db.cursor()
+    cursor.execute("SELECT name, value"
+                   " FROM session_attribute"
+                   " WHERE sid='%s'"
+                   " AND (name='email' OR name='name')" % username)
+    return dict((name, value) for name, value in cursor)
+
+
+class TracHtPasswdBackend(HtPasswdBackend):
+
+    def _get_user_info(self, username, password=None):
+        try:
+            trac_env = settings.TRAC_ENV
+            data = get_trac_user(self.trac_env, username)
+        except:
+            data = {}
+        email = data.get('email', '')
+        name = data.get('name', '').split(None, 1)
+        first_name = (len(name) >= 1) and name[0] or ''
+        last_name = (len(name) == 2) and name[1] or ''
+        if email == '' and getattr(settings, 'TRAC_EMAIL_USERNAME', False):
+            email = username
+        return (email, first_name, last_name)
 
