@@ -46,40 +46,58 @@ def get_trac_user(path, username):
 
 class TracHtPasswdBackend(object):
 
-    htpasswd = settings.TRAC_HTPASSWD
-    htgroup = settings.TRAC_HTGROUP
-    trac_env = settings.TRAC_ENV
-    store_password = settings.TRAC_STORE_PASSWORD
-
     def _get_trac_user(self, username):
         try:
+            trac_env = settings.TRAC_ENV
             data = get_trac_user(self.trac_env, username)
-        except Exception, e:
+        except:
             data = {}
         email = data.get('email', '')
         name = data.get('name', '').split(None, 1)
         first_name = (len(name) >= 1) and name[0] or ''
         last_name = (len(name) == 2) and name[1] or ''
+        if email == '' and getattr(settings, 'TRAC_EMAIL_USERNAME', False):
+            email = username
         return (email, first_name, last_name)
 
-    def _get_member_of(self, username):
-        groups = [map(str.split, x.split(':', 1)) for x in file(self.htgroup)]
-        groups = dict([[x, y.split()] for x, y in groups])
-        return [group for group, users in groups.iteritems() if username in users]
+    def _get_member_of(self, username, seen=None):
+        if seen is None:
+            seen = set()
+        htgroup = getattr(settings, 'TRAC_HTGROUP', None)
+        if htgroup:
+            groups = [map(str.strip, x.strip().split(':', 1)) for x in file(htgroup)]
+            groups = dict([[x, y.split()] for x, y in groups])
+            seen.update([group for group, users in groups.iteritems() if username in users])
+        return seen
 
     def authenticate(self, username, password):
         import crypt
-        users = dict([x.strip().split(':', 1) for x in file(self.htpasswd)])
-        if username in users:
-            # TODO: check group
-            hashed_passwd = users.get(username)
-            if hashed_passwd == crypt.crypt(password, hashed_passwd[:2]):
-                return self.get_or_create_user(username, password)
+        htpasswd = getattr(settings, 'TRAC_HTPASSWD', None)
+        if not password:
+            logging.warning('settings.TRAC_HTPASSWD not found')
+            return None
+        users = dict([x.strip().split(':', 1) for x in file(htpasswd)])
+        if username not in users:
+            return None
+        # check required group
+        required_groups = getattr(settings, 'TRAC_REQUIRED_GROUPS', None)
+        if required_groups:
+            seen = self._get_member_of(username)
+            if not seen.intersection(required_groups):
+                logging.warning("User %s does not belong to the required groups %s" %
+                                (username, required_groups))
+                return None
+        # check password
+        hashed_passwd = users.get(username)
+        if hashed_passwd == crypt.crypt(password, hashed_passwd[:2]):
+            return self.get_or_create_user(username, password)
 
     def get_or_create_user(self, username, password=None):
+        store_password = getattr(settings, 'TRAC_STORE_PASSWORD', False)
         try:
             user = User.objects.get(username=username)
-            if self.store_password:
+            # TODO: check user info change
+            if store_password:
                 # check password change
                 if not user.check_password(password):
                     user.set_password(password)
@@ -93,13 +111,13 @@ class TracHtPasswdBackend(object):
                             email=email)
                 user.is_staff = False
                 user.is_superuser = False
-                if self.store_password and password != None:
+                if store_password and password != None:
                     user.set_password(password)
                 else:
                     user.set_unusable_password()
                 user.save()
-            except:
-                pass
+            except Exception, e:
+                logging.warning("Unexpected exception occurred: " + str(e))
         return user
 
     def get_user(self, user_id):
