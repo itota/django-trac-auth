@@ -119,8 +119,7 @@ class TracHtPasswdBackend(HtPasswdBackend):
 
     def _get_user_info(self, username, password=None):
         try:
-            trac_env = settings.TRAC_ENV
-            data = get_trac_user(self.trac_env, username)
+            data = get_trac_user(settings.TRAC_ENV, username)
         except:
             data = {}
         email = data.get('email', '')
